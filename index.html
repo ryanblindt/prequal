@@ -158,7 +158,8 @@ tr.tot td{border-bottom:0;border-top:2px solid var(--navy);font-weight:700}
 <section class="card">
   <h2>Taxes, insurance, HOA, MI</h2>
   <label>Property taxes</label>
-  <div class="row"><input type="text" inputmode="decimal" id="tax" placeholder="0"><div class="seg" data-for="taxPer"><button data-v="a" class="on">Yr</button><button data-v="m">Mo</button></div></div>
+  <div class="row"><input type="text" inputmode="decimal" id="tax" placeholder="0"><input type="text" inputmode="decimal" id="taxPct" placeholder="1.25" class="hide"><div class="seg" data-for="taxPer"><button data-v="a" class="on">Yr</button><button data-v="m">Mo</button><button data-v="pct">%</button></div></div>
+  <div class="hint hide" id="taxCalc">Tax: $0 / yr ($0 / mo)</div>
   <label>Homeowners insurance</label>
   <div class="row"><input type="text" inputmode="decimal" id="ins" placeholder="0"><div class="seg" data-for="insPer"><button data-v="a" class="on">Yr</button><button data-v="m">Mo</button></div></div>
   <div class="row">
@@ -248,7 +249,9 @@ var Calc = {
       loan = Math.max(0, s.price - downAmt);
     }
     var pi = Calc.pi(loan, s.rate, s.term);
-    var tax = s.taxPer === "a" ? s.tax / 12 : s.tax;
+    // taxPer: "a" = annual $, "m" = monthly $, "pct" = % of purchase price (or property value in loan mode) per year
+    var taxAnnual = s.taxPer === "pct" ? value * (s.taxPct || 0) / 100 : (s.taxPer === "a" ? s.tax : s.tax * 12);
+    var tax = s.taxPer === "m" ? s.tax : taxAnnual / 12;
     var ins = s.insPer === "a" ? s.ins / 12 : s.ins;
     var housing = pi + tax + ins + s.hoa + s.mi;
     var debts = s.debts;
@@ -266,7 +269,7 @@ var Calc = {
       if (s.downMode === "pct") maxPrice = s.down < 100 ? maxLoanBack / (1 - s.down / 100) : null;
       else maxPrice = maxLoanBack + s.down;
     }
-    return { income: inc, loan: loan, value: value, downAmt: downAmt, pi: pi, tax: tax, ins: ins, hoa: s.hoa, mi: s.mi,
+    return { income: inc, loan: loan, value: value, downAmt: downAmt, pi: pi, tax: tax, taxAnnual: taxAnnual, ins: ins, hoa: s.hoa, mi: s.mi,
       housing: housing, debts: debts, front: front, back: back, ltv: ltv,
       maxHousingBack: maxHousingBack, maxLoanBack: maxLoanBack, maxHousingFront: maxHousingFront,
       maxLoanBoth: maxLoanBoth, maxPrice: maxPrice };
@@ -279,15 +282,15 @@ if (typeof module !== "undefined") module.exports = Calc;
 (function () {
   var KEY = "tmhl_prequal_v1";
   var $ = function (id) { return document.getElementById(id); };
-  var fields = ["inc1","inc2","price","down","loanAmt","value","rate","tax","ins","hoa","mi","debtTotal","cFront","cBack"];
+  var fields = ["inc1","inc2","price","down","loanAmt","value","rate","tax","taxPct","ins","hoa","mi","debtTotal","cFront","cBack"];
   var SKEY = "tmhl_prequal_scenarios_v1";
   function defaults() { return { segs: { inc1Per:"m", inc2Per:"m", loanMode:"purchase", downMode:"pct", term:"30", taxPer:"a", insPer:"a", debtMode:"items" },
-                vals: {}, program: "conv", debts: [{n:"Car",a:""},{n:"Student loan",a:""},{n:"Credit cards",a:""}], currentId: null }; }
+                vals: { taxPct: "1.25" }, program: "conv", debts: [{n:"Car",a:""},{n:"Student loan",a:""},{n:"Credit cards",a:""}], currentId: null }; }
   var state = defaults();
   var scenarios = {};
   var lastResult = null;
 
-  function merge(s) { var d = defaults(); if (!s) return d; for (var k in (s.segs || {})) d.segs[k] = s.segs[k]; d.vals = s.vals || {}; d.program = s.program || "conv"; if (s.debts) d.debts = s.debts; d.currentId = s.currentId || null; return d; }
+  function merge(s) { var d = defaults(); if (!s) return d; for (var k in (s.segs || {})) d.segs[k] = s.segs[k]; d.vals = s.vals || {}; if (d.vals.taxPct == null) d.vals.taxPct = "1.25"; d.program = s.program || "conv"; if (s.debts) d.debts = s.debts; d.currentId = s.currentId || null; return d; }
   function load() { try { state = merge(JSON.parse(localStorage.getItem(KEY))); } catch (e) {} try { scenarios = JSON.parse(localStorage.getItem(SKEY)) || {}; } catch (e) { scenarios = {}; } if (state.currentId && !scenarios[state.currentId]) state.currentId = null; }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} renderScnHeader(); }
   function saveScenarios() { try { localStorage.setItem(SKEY, JSON.stringify(scenarios)); } catch (e) { alert("Could not save - storage full or blocked."); } }
@@ -309,7 +312,7 @@ if (typeof module !== "undefined") module.exports = Calc;
     if (parts.length > 1) out += "." + parts.slice(1).join("");
     if (el.value !== out) el.value = out;
   }
-  var noComma = { rate:1, down:1, cFront:1, cBack:1 };
+  var noComma = { rate:1, down:1, taxPct:1, cFront:1, cBack:1 };
 
   function renderDebts() {
     var box = $("debtItems"); box.innerHTML = "";
@@ -347,12 +350,15 @@ if (typeof module !== "undefined") module.exports = Calc;
     var debts = g.debtMode === "total" ? N($("debtTotal").value) : state.debts.reduce(function (s, d) { return s + N(d.a); }, 0);
     var r = Calc.compute({ inc1:N($("inc1").value), inc1Per:g.inc1Per, inc2:N($("inc2").value), inc2Per:g.inc2Per,
       loanMode:g.loanMode, price:N($("price").value), down:N($("down").value), downMode:g.downMode, loanAmt:N($("loanAmt").value), value:N($("value").value),
-      rate:N($("rate").value), term:N(g.term), tax:N($("tax").value), taxPer:g.taxPer, ins:N($("ins").value), insPer:g.insPer,
+      rate:N($("rate").value), term:N(g.term), tax:N($("tax").value), taxPct:N($("taxPct").value), taxPer:g.taxPer, ins:N($("ins").value), insPer:g.insPer,
       hoa:N($("hoa").value), mi:N($("mi").value), debts:debts, frontLimit:front, backLimit:back });
     lastResult = r;
 
     $("incTotal").textContent = "Total monthly income: " + fmt2(r.income);
     $("loanCalc").textContent = "Loan amount: " + fmt0(r.loan) + (g.downMode === "pct" ? "  (down " + fmt0(r.downAmt) + ")" : (r.value > 0 ? "  (down " + (r.downAmt / r.value * 100).toFixed(2) + "%)" : ""));
+    var tp = g.taxPer === "pct";
+    $("tax").classList.toggle("hide", tp); $("taxPct").classList.toggle("hide", !tp); $("taxCalc").classList.toggle("hide", !tp);
+    $("taxCalc").textContent = r.value > 0 ? "Tax: " + fmt0(r.taxAnnual) + " / yr (" + fmt2(r.tax) + " / mo) on " + fmt0(r.value) : (g.loanMode === "loan" ? "Enter property value to compute tax" : "Enter purchase price to compute tax");
     $("debtSum").textContent = "Debts: " + fmt2(debts) + " / mo";
     $("oHousing").textContent = fmt2(r.housing);
     $("bPI").textContent = fmt2(r.pi); $("bTax").textContent = fmt2(r.tax); $("bIns").textContent = fmt2(r.ins);
